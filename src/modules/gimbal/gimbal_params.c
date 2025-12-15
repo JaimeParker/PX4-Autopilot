@@ -225,6 +225,15 @@ PARAM_DEFINE_FLOAT(MNT_RATE_PITCH, 30.0f);
 PARAM_DEFINE_FLOAT(MNT_RATE_YAW, 30.0f);
 
 /**
+ * Alpha filter time constant coefficient determining convergence in seconds.
+ *
+ * @min 0.0
+ * @group Mount
+ */
+PARAM_DEFINE_FLOAT(MNT_TAU, 0.0f);
+
+
+/**
  * Input mode for RC gimbal input
  *
  * @value 0 Angle
