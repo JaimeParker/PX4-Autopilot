@@ -1488,7 +1488,7 @@ FixedWingModeManager::control_auto_landing_straight(const hrt_abstime &now, cons
 		float pitch_min_rad = flare_ramp_interpolator_sqrt * radians(_param_fw_lnd_fl_pmin.get()) +
 				      (1.0f - flare_ramp_interpolator_sqrt) * _flare_states.initial_pitch;
 		float pitch_max_rad = flare_ramp_interpolator_sqrt * radians(_param_fw_lnd_fl_pmax.get()) +
-				      (1.0f - flare_ramp_interpolator_sqrt) * radians(_param_fw_p_lim_max.get());
+				      (1.0f - flare_ramp_interpolator_sqrt) * _flare_states.initial_pitch;
 
 		if (_param_fw_lnd_td_time.get() > FLT_EPSILON) {
 			const float touchdown_time = math::max(_param_fw_lnd_td_time.get(), _param_fw_lnd_fl_time.get());
@@ -1663,7 +1663,7 @@ FixedWingModeManager::control_auto_landing_circular(const hrt_abstime &now, cons
 		float pitch_min_rad = flare_ramp_interpolator_sqrt * radians(_param_fw_lnd_fl_pmin.get()) +
 				      (1.0f - flare_ramp_interpolator_sqrt) * _flare_states.initial_pitch;
 		float pitch_max_rad = flare_ramp_interpolator_sqrt * radians(_param_fw_lnd_fl_pmax.get()) +
-				      (1.0f - flare_ramp_interpolator_sqrt) * radians(_param_fw_p_lim_max.get());
+				      (1.0f - flare_ramp_interpolator_sqrt) * _flare_states.initial_pitch;
 
 		if (_param_fw_lnd_td_time.get() > FLT_EPSILON) {
 			const float touchdown_time = math::max(_param_fw_lnd_td_time.get(), _param_fw_lnd_fl_time.get());
