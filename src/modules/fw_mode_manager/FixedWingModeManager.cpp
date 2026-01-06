@@ -162,14 +162,16 @@ FixedWingModeManager::airspeed_poll()
 {
 	airspeed_validated_s airspeed_validated;
 
-	if (_param_fw_use_airspd.get() && _airspeed_validated_sub.update(&airspeed_validated)) {
+	if (_airspeed_validated_sub.update(&airspeed_validated)) {
 
 		// do not use synthetic airspeed as it's for the use here not reliable enough
-		if (PX4_ISFINITE(airspeed_validated.calibrated_airspeed_m_s)
+		if (_param_fw_use_airspd.get() && PX4_ISFINITE(airspeed_validated.calibrated_airspeed_m_s)
 		    && airspeed_validated.airspeed_source != airspeed_validated_s::SOURCE_SYNTHETIC) {
 
 			_airspeed_eas = airspeed_validated.calibrated_airspeed_m_s;
 		}
+
+		_throttle = airspeed_validated.throttle_filtered;
 	}
 
 	// no airspeed updates for one second --> declare invalid
@@ -248,6 +250,7 @@ FixedWingModeManager::vehicle_attitude_poll()
 
 		const Eulerf euler_angles(R);
 		_yaw = euler_angles(2);
+		_pitch = euler_angles(1);
 
 		const Vector3f body_acceleration = R.transpose() * Vector3f{_local_pos.ax, _local_pos.ay, _local_pos.az};
 		_body_acceleration_x = body_acceleration(0);
@@ -1448,6 +1451,8 @@ FixedWingModeManager::control_auto_landing_straight(const hrt_abstime &now, cons
 			_flare_states.flaring = true;
 			_flare_states.start_time = now;
 			_flare_states.initial_height_rate_setpoint = -_local_pos.vz;
+			_flare_states.initial_pitch = _pitch;
+			_flare_states.initial_throttle = _airspeed_valid ? _throttle : _param_fw_thr_max.get();
 			events::send(events::ID("fixedwing_position_control_landing_flaring"), events::Log::Info,
 				     "Landing, flaring");
 		}
@@ -1480,7 +1485,7 @@ FixedWingModeManager::control_auto_landing_straight(const hrt_abstime &now, cons
 						   (1.0f - flare_ramp_interpolator_sqrt) * _flare_states.initial_height_rate_setpoint;
 
 		float pitch_min_rad = flare_ramp_interpolator_sqrt * radians(_param_fw_lnd_fl_pmin.get()) +
-				      (1.0f - flare_ramp_interpolator_sqrt) * radians(_param_fw_p_lim_min.get());
+				      (1.0f - flare_ramp_interpolator_sqrt) * _flare_states.initial_pitch;
 		float pitch_max_rad = flare_ramp_interpolator_sqrt * radians(_param_fw_lnd_fl_pmax.get()) +
 				      (1.0f - flare_ramp_interpolator_sqrt) * radians(_param_fw_p_lim_max.get());
 
@@ -1499,9 +1504,9 @@ FixedWingModeManager::control_auto_landing_straight(const hrt_abstime &now, cons
 
 		// idle throttle may be >0 for internal combustion engines
 		// normally set to zero for electric motors
+		// Ramp throttle from current value to idle over flare duration
 		const float throttle_max = flare_ramp_interpolator_sqrt * _param_fw_thr_idle.get() +
-					   (1.0f - flare_ramp_interpolator_sqrt) *
-					   _param_fw_thr_max.get();
+					   (1.0f - flare_ramp_interpolator_sqrt) * _flare_states.initial_throttle;
 
 		const fixed_wing_longitudinal_setpoint_s fw_longitudinal_control_sp = {
 			.timestamp = now,
@@ -1626,6 +1631,8 @@ FixedWingModeManager::control_auto_landing_circular(const hrt_abstime &now, cons
 			_flare_states.flaring = true;
 			_flare_states.start_time = now;
 			_flare_states.initial_height_rate_setpoint = -_local_pos.vz;
+			_flare_states.initial_pitch = _pitch;
+			_flare_states.initial_throttle = _airspeed_valid ? _throttle : _param_fw_thr_max.get();
 			events::send(events::ID("fixedwing_position_control_landing_circle_flaring"), events::Log::Info,
 				     "Landing, flaring");
 		}
@@ -1653,7 +1660,7 @@ FixedWingModeManager::control_auto_landing_circular(const hrt_abstime &now, cons
 						   (1.0f - flare_ramp_interpolator_sqrt) * _flare_states.initial_height_rate_setpoint;
 
 		float pitch_min_rad = flare_ramp_interpolator_sqrt * radians(_param_fw_lnd_fl_pmin.get()) +
-				      (1.0f - flare_ramp_interpolator_sqrt) * radians(_param_fw_p_lim_min.get());
+				      (1.0f - flare_ramp_interpolator_sqrt) * _flare_states.initial_pitch;
 		float pitch_max_rad = flare_ramp_interpolator_sqrt * radians(_param_fw_lnd_fl_pmax.get()) +
 				      (1.0f - flare_ramp_interpolator_sqrt) * radians(_param_fw_p_lim_max.get());
 
@@ -1671,9 +1678,9 @@ FixedWingModeManager::control_auto_landing_circular(const hrt_abstime &now, cons
 
 		// idle throttle may be >0 for internal combustion engines
 		// normally set to zero for electric motors
+		// Ramp throttle from current value to idle over flare duration
 		const float throttle_max = flare_ramp_interpolator_sqrt * _param_fw_thr_idle.get() +
-					   (1.0f - flare_ramp_interpolator_sqrt) *
-					   _param_fw_thr_max.get();
+					   (1.0f - flare_ramp_interpolator_sqrt) * _flare_states.initial_throttle;
 		const fixed_wing_longitudinal_setpoint_s fw_longitudinal_control_sp = {
 			.timestamp = now,
 			.altitude = NAN,

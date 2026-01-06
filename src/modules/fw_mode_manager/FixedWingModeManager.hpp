@@ -252,6 +252,8 @@ private:
 
 	float _yaw{0.0f};
 	float _yawrate{0.0f};
+	float _pitch{0.0f}; // [rad] current pitch angle from attitude
+	float _throttle{0.0f}; // [0-1] last set throttle
 
 	float _body_acceleration_x{0.f};
 	float _body_velocity_x{0.f};
@@ -335,6 +337,8 @@ private:
 		bool flaring{false};
 		hrt_abstime start_time{0}; // [us]
 		float initial_height_rate_setpoint{0.0f}; // [m/s]
+		float initial_pitch{0.0f}; // [rad]
+		float initial_throttle{0.0f}; // [0-1] throttle value when flare started
 	} _flare_states;
 
 	// [m] last terrain estimate which was valid
