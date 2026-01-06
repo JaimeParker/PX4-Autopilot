@@ -172,6 +172,7 @@ FixedWingModeManager::airspeed_poll()
 		}
 
 		_throttle = airspeed_validated.throttle_filtered;
+		_time_airspeed_last_valid = airspeed_validated.timestamp;
 	}
 
 	// no airspeed updates for one second --> declare invalid
