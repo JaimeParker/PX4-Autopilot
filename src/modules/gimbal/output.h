@@ -95,8 +95,12 @@ protected:
 
 	/** calculate the _angle_outputs (with speed) and stabilize if needed */
 	void _calculate_angle_output(const hrt_abstime &t);
+	void set_last_valid_setpoint(const bool compensate[3], const matrix::Eulerf euler_vehicle);
 
 	float _angle_outputs[3] = { 0.f, 0.f, 0.f }; ///< calculated output angles (roll, pitch, yaw) [rad]
+
+	// Quaternion float setpoint (Can be in different frames of references)
+	matrix::Eulerf _last_valid_setpoint;
 	hrt_abstime _last_update;
 
 private:
