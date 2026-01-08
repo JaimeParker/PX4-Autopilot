@@ -162,16 +162,15 @@ FixedWingModeManager::airspeed_poll()
 {
 	airspeed_validated_s airspeed_validated;
 
-	if (_airspeed_validated_sub.update(&airspeed_validated)) {
+	if (_param_fw_use_airspd.get() && _airspeed_validated_sub.update(&airspeed_validated)) {
 
 		// do not use synthetic airspeed as it's for the use here not reliable enough
-		if (_param_fw_use_airspd.get() && PX4_ISFINITE(airspeed_validated.calibrated_airspeed_m_s)
+		if (PX4_ISFINITE(airspeed_validated.calibrated_airspeed_m_s)
 		    && airspeed_validated.airspeed_source != airspeed_validated_s::SOURCE_SYNTHETIC) {
 
 			_airspeed_eas = airspeed_validated.calibrated_airspeed_m_s;
 		}
 
-		_throttle = airspeed_validated.throttle_filtered;
 		_time_airspeed_last_valid = airspeed_validated.timestamp;
 	}
 
@@ -258,6 +257,15 @@ FixedWingModeManager::vehicle_attitude_poll()
 
 		const Vector3f body_velocity = R.transpose() * Vector3f{_local_pos.vx, _local_pos.vy, _local_pos.vz};
 		_body_velocity_x = body_velocity(0);
+	}
+}
+
+void FixedWingModeManager::vehicle_attitude_setpoint_poll()
+{
+	vehicle_attitude_setpoint_s vehicle_attitude_setpoint;
+
+	if (_vehicle_attitude_setpoint_sub.update(&vehicle_attitude_setpoint)) {
+		_throttle = vehicle_attitude_setpoint.thrust_body[0];
 	}
 }
 
@@ -1453,7 +1461,7 @@ FixedWingModeManager::control_auto_landing_straight(const hrt_abstime &now, cons
 			_flare_states.start_time = now;
 			_flare_states.initial_height_rate_setpoint = -_local_pos.vz;
 			_flare_states.initial_pitch = _pitch;
-			_flare_states.initial_throttle = _airspeed_valid ? _throttle : _param_fw_thr_max.get();
+			_flare_states.initial_throttle = math::min(_throttle, _param_fw_thr_max.get());
 			events::send(events::ID("fixedwing_position_control_landing_flaring"), events::Log::Info,
 				     "Landing, flaring");
 		}
@@ -1633,7 +1641,7 @@ FixedWingModeManager::control_auto_landing_circular(const hrt_abstime &now, cons
 			_flare_states.start_time = now;
 			_flare_states.initial_height_rate_setpoint = -_local_pos.vz;
 			_flare_states.initial_pitch = _pitch;
-			_flare_states.initial_throttle = _airspeed_valid ? _throttle : _param_fw_thr_max.get();
+			_flare_states.initial_throttle = math::min(_throttle, _param_fw_thr_max.get());
 			events::send(events::ID("fixedwing_position_control_landing_circle_flaring"), events::Log::Info,
 				     "Landing, flaring");
 		}
@@ -2108,6 +2116,7 @@ FixedWingModeManager::Run()
 		airspeed_poll();
 		manual_control_setpoint_poll();
 		vehicle_attitude_poll();
+		vehicle_attitude_setpoint_poll();
 		vehicle_command_poll();
 		vehicle_control_mode_poll();
 		wind_poll(now);
