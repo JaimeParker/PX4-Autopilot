@@ -168,6 +168,10 @@ jobs:
     outputs:
       uploadlocation: ${{ steps.upload-location.outputs.uploadlocation }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: Tools/manifest
+
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
@@ -202,6 +206,25 @@ jobs:
           fi
 
           echo "uploadlocation=$location" >> $GITHUB_OUTPUT
+
+      - name: Generate Release Manifest
+        run: |
+          # Generate a manifest of all .px4 firmware files for this release
+          version="${{ steps.upload-location.outputs.uploadlocation }}"
+          git_tag=""
+          base_url=""
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            git_tag="${GITHUB_REF#refs/tags/}"
+            base_url="https://github.com/${{ github.repository }}/releases/download/${git_tag}"
+          fi
+
+          python3 ./Tools/manifest/gen_release_manifest.py \
+            --dir artifacts/ \
+            --version "$version" \
+            --git-tag "$git_tag" \
+            --base-url "$base_url" \
+            --out artifacts/release_manifest.json
 
       - name: Uploading Artifacts to S3 [${{ steps.upload-location.outputs.uploadlocation }}]
         uses: jakejarvis/s3-sync-action@master
@@ -238,5 +261,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         with:
           draft: true
-          files: artifacts/*.px4
+          files: |
+            artifacts/*.px4
+            artifacts/release_manifest.json
           name: ${{ steps.upload-location.outputs.uploadlocation }}
