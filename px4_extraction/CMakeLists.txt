@@ -17,11 +17,13 @@ add_compile_options(
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/lib
     ${CMAKE_CURRENT_SOURCE_DIR}/attitude_control
+    ${CMAKE_CURRENT_SOURCE_DIR}/rate_control
 )
 
 # Add subdirectories
 add_subdirectory(lib/matrix)
 add_subdirectory(attitude_control)
+add_subdirectory(rate_control)
 
 # Optional: Build tests
 option(BUILD_TESTS "Build test executables" ON)

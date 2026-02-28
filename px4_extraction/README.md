@@ -1,41 +1,53 @@
-# PX4 Attitude Controller Extraction
+# PX4 Inner-Loop Controller Extraction
 
-Standalone C++ implementation of PX4's quaternion-based attitude controller for use in reinforcement learning environments.
+Standalone C++ implementation of PX4's attitude controller and body-rate controller for use in reinforcement learning environments.
 
 ## Overview
 
-This project extracts the core attitude control algorithm from PX4-Autopilot v1.16.0, removing all PX4 framework dependencies (uORB, WorkItem, etc.) and providing a clean API for autonomous flight control.
+This project extracts the core inner-loop control algorithms from PX4-Autopilot v1.16.0, removing all PX4 framework dependencies (uORB, WorkItem, parameters, etc.) and providing a clean, data-driven API for autonomous quadrotor control.
 
-**Controller Type:** Quaternion-based proportional attitude controller
-**Algorithm:** Based on "Nonlinear Quadrocopter Attitude Control" (ETH Zurich, 2013)
+**Attitude Controller:** Quaternion-based proportional controller — "Nonlinear Quadrocopter Attitude Control" (ETH Zurich, 2013)
+**Rate Controller:** 3-axis PID body-rate controller with integrator anti-windup and yaw torque LPF
 
 ## Features
 
 - Pure C++17 implementation
-- No PX4 framework dependencies
-- Autonomous mode only (no manual control code)
-- Default PX4 gains with runtime configuration
+- No PX4 framework dependencies (no uORB, no param system, no work queues)
+- Autonomous mode only (no manual/acro control code)
+- Default PX4 gains with full runtime configuration
 - Includes PX4 matrix library for quaternion math
-- Simple test suite
+- AlphaFilter (first-order LPF) for yaw torque smoothing
+- Integrator anti-windup with control-allocator saturation feedback
+- Comprehensive GTest suite (19 tests)
 
 ## Directory Structure
 
 ```
 px4_extraction/
-├── CMakeLists.txt                    # Root build configuration
-├── README.md                         # This file
-├── attitude_control/                 # Core controller
-│   ├── AttitudeControl.hpp           # Core algorithm (from PX4)
-│   ├── AttitudeControl.cpp           # Core implementation (from PX4)
-│   ├── AttitudeControlTypes.hpp      # Data structures
-│   ├── AttitudeControllerWrapper.hpp # Clean API
-│   ├── AttitudeControllerWrapper.cpp # Wrapper implementation
+├── CMakeLists.txt                        # Root build configuration
+├── README.md                             # This file
+├── attitude_control/                     # Attitude controller (Phase 1)
+│   ├── AttitudeControl.hpp               # Core algorithm (from PX4)
+│   ├── AttitudeControl.cpp               # Core implementation (from PX4)
+│   ├── AttitudeControlTypes.hpp          # Data structures
+│   ├── AttitudeControllerWrapper.hpp     # Clean API wrapper
+│   ├── AttitudeControllerWrapper.cpp     # Wrapper implementation
 │   └── CMakeLists.txt
-├── lib/                              # Dependencies
-│   ├── matrix/                       # PX4 matrix library (quaternion, vector math)
-│   └── mathlib/                      # Math utilities (Limits, Functions)
-└── test/                             # Tests
-    ├── attitude_control_simple_test.cpp
+├── rate_control/                         # Rate controller (Phase 2)
+│   ├── RateControl.hpp                   # Core PID algorithm (from PX4)
+│   ├── RateControl.cpp                   # Core implementation (from PX4)
+│   ├── RateControlTypes.hpp              # Params, I/O structs, status
+│   ├── RateControllerWrapper.hpp         # Clean API with K-scaling + yaw LPF
+│   ├── RateControllerWrapper.cpp         # Wrapper implementation
+│   └── CMakeLists.txt
+├── lib/                                  # Dependencies
+│   ├── matrix/                           # PX4 matrix library (quaternion, vector math)
+│   ├── mathlib/                          # Math utilities (Limits, Functions, AlphaFilter)
+│   └── px4_platform_common/              # Minimal shim (PX4_ISFINITE, M_TWOPI_F)
+└── test/                                 # Tests
+    ├── attitude_control_simple_test.cpp  # Simple attitude controller demo
+    ├── AttitudeControlTest.cpp           # GTest: attitude control (3 tests)
+    ├── RateControlTest.cpp              # GTest: rate control + pipeline (16 tests)
     └── CMakeLists.txt
 ```
 
@@ -59,10 +71,19 @@ make
 ### Run Tests
 
 ```bash
+# Attitude controller tests (3 GTests + convergence suite)
+./test/attitude_control_gtest
+
+# Rate controller + pipeline tests (16 GTests)
+./test/rate_control_gtest
+
+# Simple attitude controller demo
 ./test/attitude_control_simple_test
 ```
 
 ## Usage Example
+
+### Attitude Controller Only
 
 ```cpp
 #include "AttitudeControllerWrapper.hpp"
@@ -86,7 +107,6 @@ controller.setGains(config);
 // Prepare inputs
 AttitudeState state;
 state.q = matrix::Quatf(1.0f, 0.0f, 0.0f, 0.0f);  // Current attitude (identity)
-state.timestamp = 0;
 
 AttitudeSetpoint setpoint;
 setpoint.q_d = matrix::Quatf(0.9914f, 0.1305f, 0.0f, 0.0f);  // 15° roll
@@ -95,11 +115,57 @@ setpoint.thrust_body = matrix::Vector3f(0.0f, 0.0f, -0.5f);  // 50% thrust
 
 // Run controller
 RateSetpoint output = controller.update(state, setpoint);
+// output.rates = body rate setpoint [rad/s]
+// output.thrust_body = thrust passthrough
+```
 
-// Use outputs
-std::cout << "Roll rate: " << output.rates(0) << " rad/s" << std::endl;
-std::cout << "Pitch rate: " << output.rates(1) << " rad/s" << std::endl;
-std::cout << "Yaw rate: " << output.rates(2) << " rad/s" << std::endl;
+### Full Pipeline: Attitude → Rate → Torque
+
+```cpp
+#include "AttitudeControllerWrapper.hpp"
+#include "RateControllerWrapper.hpp"
+
+using namespace px4_extraction;
+
+// Create both controllers with default PX4 gains
+AttitudeControllerWrapper att_ctrl;
+RateControllerWrapper rate_ctrl;
+
+// Optional: tune rate controller
+RateControlParams rate_params;
+rate_params.gain_p = {0.15f, 0.15f, 0.2f};  // P gains [roll, pitch, yaw]
+rate_params.gain_i = {0.2f, 0.2f, 0.1f};    // I gains
+rate_params.gain_d = {0.003f, 0.003f, 0.0f}; // D gains
+rate_params.gain_k = {1.0f, 1.0f, 1.0f};    // Global K multiplier
+rate_params.integrator_limit = {0.3f, 0.3f, 0.3f};
+rate_params.yaw_torque_lpf_cutoff_freq = 2.0f; // Hz
+rate_ctrl.setParams(rate_params);
+
+// === Each simulation step ===
+
+// Step 1: Attitude controller → rate setpoint
+AttitudeState state;
+state.q = current_quaternion;  // from physics sim
+
+AttitudeSetpoint att_sp;
+att_sp.q_d = desired_quaternion;  // from RL policy
+att_sp.thrust_body = {0.f, 0.f, -thrust};
+
+RateSetpoint rate_sp = att_ctrl.update(state, att_sp);
+
+// Step 2: Rate controller → torque setpoint
+RateControlInput rc_input;
+rc_input.rates_sp = rate_sp.rates;
+rc_input.rates_actual = current_gyro;       // from physics sim
+rc_input.angular_accel = current_ang_accel;  // from sim or finite-diff of gyro
+rc_input.thrust_body = rate_sp.thrust_body;
+rc_input.dt = sim_dt;                        // time step from RL env
+rc_input.landed = false;
+
+RateControlOutput rc_output;
+rate_ctrl.update(rc_input, rc_output);
+// rc_output.torque_sp = normalized torque [-1,1] for [roll, pitch, yaw]
+// rc_output.thrust_body = thrust passthrough → feed to control allocator (Phase 3)
 ```
 
 ## API Reference

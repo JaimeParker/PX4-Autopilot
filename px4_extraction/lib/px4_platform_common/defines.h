@@ -14,6 +14,11 @@
 // High precision Pi constant
 #define M_PI_PRECISE        3.141592653589793238462643383279502884
 
+// Two-pi constant (used by AlphaFilter)
+#ifndef M_TWOPI_F
+#define M_TWOPI_F           6.28318531f
+#endif
+
 // Finite check macros
 static inline constexpr bool PX4_ISFINITE(float x) { return std::isfinite(x); }
 static inline constexpr bool PX4_ISFINITE(double x) { return std::isfinite(x); }
