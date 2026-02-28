@@ -18,12 +18,16 @@ include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/lib
     ${CMAKE_CURRENT_SOURCE_DIR}/attitude_control
     ${CMAKE_CURRENT_SOURCE_DIR}/rate_control
+    ${CMAKE_CURRENT_SOURCE_DIR}/control_allocator
+    ${CMAKE_CURRENT_SOURCE_DIR}/actuator_output
 )
 
 # Add subdirectories
 add_subdirectory(lib/matrix)
 add_subdirectory(attitude_control)
 add_subdirectory(rate_control)
+add_subdirectory(control_allocator)
+add_subdirectory(actuator_output)
 
 # Optional: Build tests
 option(BUILD_TESTS "Build test executables" ON)

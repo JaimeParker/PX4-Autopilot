@@ -45,16 +45,29 @@ You will assist the human developer in executing the following three phases sequ
 * **Outputs:** Normalized torque setpoints (3D vector: roll, pitch, yaw).
 * **Refactoring:** Create a `RateControlParams` struct for PID gains ($K_p, K_i, K_d$, feedforward, and rate limits).
 
-### Phase 3: Extract Control Allocation (The Critical Step)
-**Objective:** Map normalized torques and thrust to individual motor PWM/actuator commands.
+### Phase 3: Extract Control Allocation
+**Objective:** Map normalized torques and thrust to individual normalized motor commands [0, 1].
 * **Context:** PX4 uses a dynamic control allocator. We must strip away the dynamic loading and matrix inversion overhead and implement the static matrix multiplication for a standard quadrotor.
-* **Agent Task:** Reconstruct the multirotor effectiveness matrix application.
-* **Inputs:** Normalized torque setpoint (from Phase 2), Normalized thrust setpoint (from RL policy or altitude controller).
-* **Outputs:** Actuator commands (4-element array mapping to Motors 1-4).
+* **Agent Task:** Reconstruct the multirotor effectiveness matrix application and sequential desaturation.
+* **Inputs:** Normalized torque setpoint (from Phase 2), Normalized thrust setpoint (from RL policy or altitude controller), `dt`.
+* **Outputs:** Normalized motor commands (4-element array [0, 1] mapping to Motors 1-4), saturation feedback flags for rate controller anti-windup.
 * **Key Implementations:**
-    1.  **Geometry Matrix:** Define a strict geometry struct (e.g., Quadrotor X) to compute the effectiveness matrix (roll, pitch, yaw, thrust factors per motor).
-    2.  **Mixer Logic:** Implement the desaturation logic.
-    3.  **Actuator Mapping:** Implement the final thrust curve mapping.
+    1.  **Geometry Matrix:** Define a strict geometry struct (Quadrotor X, Iris preset) to compute the 6×4 effectiveness matrix (roll, pitch, yaw, thrust factors per motor).
+    2.  **Mixer Logic:** Copy `ControlAllocationPseudoInverse` and `ControlAllocationSequentialDesaturation` from PX4's `src/lib/control_allocation/`. Strip `ModuleParams` dependency; replace `MC_AIRMODE` param with a plain int (default: 1 = RP airmode).
+    3.  **Saturation Feedback:** Compute unallocated torque and saturation flags; feed back to `RateControllerWrapper::setSaturationStatus()` for integrator anti-windup.
+* **Note:** Thrust curve mapping and PWM conversion are deferred to Phase 4.
+
+### Phase 4: Thrust Curve & Actuator Output Mapping
+**Objective:** Convert normalized motor commands [0, 1] from the control allocator into final actuator signals (PWM values or DShot commands).
+* **Context:** PX4 applies a nonlinear thrust model inverse (`THR_MDL_FAC`) to linearize the motor thrust response, then maps to PWM range. This happens in `src/lib/mixer_module/functions/FunctionMotors.hpp`.
+* **Agent Task:** Extract the thrust curve linearization and PWM mapping logic.
+* **Inputs:** Normalized motor commands [0, 1] (from Phase 3).
+* **Outputs:** PWM values [PWM_MIN, PWM_MAX] or DShot command values per motor.
+* **Key Implementations:**
+    1.  **Thrust Model Factor:** Implement `THR_MDL_FAC` inverse curve: $x = \frac{-(1-f)}{2f} + \sqrt{\frac{(1-f)^2}{4f^2} + \frac{\text{control}}{f}}$ where $f$ is the thrust model factor (default 0.0 = linear, typical 0.3 for racers).
+    2.  **PWM Range Mapping:** Linear interpolation from [-1, 1] to [PWM_MIN, PWM_MAX] (typically 1000–2000 µs).
+    3.  **Idle Throttle:** Handle minimum motor signal when armed (PWM_MIN acts as idle speed).
+    4.  **DShot Support:** Optional output mode using DShot command range instead of PWM timing.
 
 ## 5. Standard API Interface Design Pattern
 When generating code for any module, follow this purely data-driven C++ pattern:

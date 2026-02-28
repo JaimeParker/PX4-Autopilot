@@ -39,6 +39,35 @@ if(NOT GTest_FOUND)
             gtest_main
             pthread
     )
+
+    add_executable(control_allocator_gtest
+        ControlAllocatorTest.cpp
+    )
+    target_include_directories(control_allocator_gtest PRIVATE /usr/include)
+    target_link_libraries(control_allocator_gtest
+        PRIVATE
+            control_allocator
+            rate_control
+            attitude_control
+            gtest
+            gtest_main
+            pthread
+    )
+
+    add_executable(actuator_output_gtest
+        ActuatorOutputTest.cpp
+    )
+    target_include_directories(actuator_output_gtest PRIVATE /usr/include)
+    target_link_libraries(actuator_output_gtest
+        PRIVATE
+            actuator_output
+            control_allocator
+            rate_control
+            attitude_control
+            gtest
+            gtest_main
+            pthread
+    )
 else()
     add_executable(attitude_control_gtest
         AttitudeControlTest.cpp
@@ -55,6 +84,31 @@ else()
     )
     target_link_libraries(rate_control_gtest
         PRIVATE
+            rate_control
+            attitude_control
+            GTest::GTest
+            GTest::Main
+    )
+
+    add_executable(control_allocator_gtest
+        ControlAllocatorTest.cpp
+    )
+    target_link_libraries(control_allocator_gtest
+        PRIVATE
+            control_allocator
+            rate_control
+            attitude_control
+            GTest::GTest
+            GTest::Main
+    )
+
+    add_executable(actuator_output_gtest
+        ActuatorOutputTest.cpp
+    )
+    target_link_libraries(actuator_output_gtest
+        PRIVATE
+            actuator_output
+            control_allocator
             rate_control
             attitude_control
             GTest::GTest
