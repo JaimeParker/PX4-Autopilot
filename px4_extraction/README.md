@@ -170,7 +170,7 @@ rate_ctrl.update(rc_input, rc_output);
 
 ## API Reference
 
-### Data Structures
+### Attitude Control Data Structures
 
 #### `AttitudeControlConfig`
 Controller configuration (gains and limits)
@@ -184,83 +184,122 @@ Controller configuration (gains and limits)
 
 #### `AttitudeState`
 Current vehicle attitude
-- `uint64_t timestamp` - Time in microseconds
 - `matrix::Quatf q` - Current attitude quaternion (Hamilton: w,x,y,z)
 
 #### `AttitudeSetpoint`
-Desired attitude from position controller
-- `uint64_t timestamp` - Time in microseconds
+Desired attitude from RL policy or position controller
 - `matrix::Quatf q_d` - Desired attitude quaternion
 - `float yaw_sp_move_rate` - Feedforward yaw rate [rad/s]
 - `matrix::Vector3f thrust_body` - Thrust vector [-1, 1]
 
 #### `RateSetpoint`
-Output to rate controller
-- `uint64_t timestamp` - Time in microseconds
+Output bridging attitude → rate controller
 - `matrix::Vector3f rates` - Body angular rates [rad/s]
 - `matrix::Vector3f thrust_body` - Thrust vector (passthrough)
 
-### Main Class
+### Rate Control Data Structures
+
+#### `RateControlParams`
+PID gains and filter settings (see Default Parameters table)
+- `matrix::Vector3f gain_p` - Proportional gains [roll, pitch, yaw]
+- `matrix::Vector3f gain_i` - Integral gains
+- `matrix::Vector3f gain_d` - Derivative gains
+- `matrix::Vector3f gain_ff` - Feedforward gains
+- `matrix::Vector3f gain_k` - Global K multiplier (scales P, I, D together)
+- `matrix::Vector3f integrator_limit` - Integral term absolute clamp
+- `float yaw_torque_lpf_cutoff_freq` - Yaw torque LPF cutoff [Hz] (default: 2.0)
+
+#### `RateControlInput`
+- `matrix::Vector3f rates_sp` - Desired body rates [rad/s] (from attitude controller)
+- `matrix::Vector3f rates_actual` - Measured body rates [rad/s] (from sim gyro)
+- `matrix::Vector3f angular_accel` - Angular acceleration [rad/s²] (from sim or finite-diff)
+- `matrix::Vector3f thrust_body` - Thrust passthrough
+- `float dt` - Time step [s] (provided by RL environment)
+- `bool landed` - Landed flag (freezes integrators when true)
+
+#### `RateControlOutput`
+- `matrix::Vector3f torque_sp` - Normalized torque setpoint [-1, 1]
+- `matrix::Vector3f thrust_body` - Thrust passthrough
+
+#### `RateCtrlStatus`
+- `float rollspeed_integ` - Roll integrator state
+- `float pitchspeed_integ` - Pitch integrator state
+- `float yawspeed_integ` - Yaw integrator state
+
+### Classes
 
 #### `AttitudeControllerWrapper`
 
-**Constructor**
 ```cpp
-AttitudeControllerWrapper()
+AttitudeControllerWrapper()                          // Default PX4 gains
+void setGains(const AttitudeControlConfig &config)   // Configure gains + rate limits
+AttitudeControlConfig getGains() const               // Query current config
+RateSetpoint update(const AttitudeState&, const AttitudeSetpoint&)  // Attitude → rates
+void reset()                                         // Reset internal state
 ```
-Initializes with default PX4 gains
 
-**Methods**
-```cpp
-void setGains(const AttitudeControlConfig &config)
-```
-Configure controller gains and rate limits
+#### `RateControllerWrapper`
 
 ```cpp
-AttitudeControlConfig getGains() const
+RateControllerWrapper()                              // Default PX4 gains
+void setParams(const RateControlParams &params)      // Configure PID + K-scaling + LPF
+void update(const RateControlInput&, RateControlOutput&)  // Rates → torque
+void setSaturationStatus(const matrix::Vector<bool,3> &upper,
+                         const matrix::Vector<bool,3> &lower) // Anti-windup hook for Phase 3
+void resetIntegral()                                 // Zero integrators + reset yaw LPF
+void getStatus(RateCtrlStatus &status)               // Inspect integrator values
 ```
-Get current configuration
-
-```cpp
-RateSetpoint update(const AttitudeState &state, const AttitudeSetpoint &setpoint)
-```
-Main control loop - converts attitude setpoint to rate setpoint
-
-```cpp
-void reset()
-```
-Reset controller (currently no-op, placeholder for future)
 
 ## Control Flow
 
 ```
-Position Controller (upstream)
+RL Policy / Position Controller (upstream)
     ↓
-AttitudeSetpoint (quaternion + thrust + yaw_rate)
+AttitudeSetpoint {q_d, thrust_body, yaw_sp_move_rate}
     ↓
 AttitudeControllerWrapper::update()
+  └─ AttitudeControl::update()  [P on quaternion error]
     ↓
-AttitudeControl::update() [Core PX4 algorithm]
+RateSetpoint {rates, thrust_body}
     ↓
-RateSetpoint (body rates + thrust)
+RateControllerWrapper::update()
+  └─ RateControl::update()  [PID + anti-windup + yaw LPF]
     ↓
-Rate Controller (downstream)
+RateControlOutput {torque_sp, thrust_body}
+    ↓
+Control Allocator (Phase 3 — next)
+    ↓
+Motor commands [4 actuator values]
 ```
 
 ## Algorithm Details
 
-The controller implements a proportional controller on quaternion error:
+### Attitude Controller (Proportional on Quaternion Error)
 
 1. **Yaw Deprioritization**: Reduces desired attitude by yaw weight to prioritize roll/pitch
-2. **Quaternion Error**: Computes `qe = q^{-1} * q_d`
-3. **Attitude Error Vector**: `eq = 2 * qe.imag()` (scaled rotation axis)
-4. **P Control**: `rate_sp = P_gain ⊗ eq`
+2. **Quaternion Error**: $q_e = q^{-1} \otimes q_d$
+3. **Attitude Error Vector**: $e_q = 2 \cdot \text{imag}(q_e)$ (scaled rotation axis)
+4. **P Control**: $\omega_{sp} = K_p \odot e_q$
 5. **Yaw Feedforward**: Adds `yaw_sp_move_rate` transformed to body frame
 6. **Rate Limiting**: Constrains output to max rate parameters
+
+### Rate Controller (PID with Anti-Windup)
+
+1. **Error**: $e = \omega_{sp} - \omega_{actual}$
+2. **Proportional**: $P = K_p \odot e$
+3. **Integral**: $I_{n+1} = I_n + K_i \odot e \cdot i_{factor} \cdot dt$, where $i_{factor} = \max\left(0,\; 1 - \left(\frac{e}{\text{rad}(400)}\right)^2\right)$
+4. **Derivative**: $D = -K_d \odot \dot{\omega}$ (uses angular acceleration, not error differentiation)
+5. **Feedforward**: $FF = K_{ff} \odot \omega_{sp}$
+6. **Output**: $\tau = K \odot (P + I - D + FF)$ (K-scaling converts ideal → parallel form)
+7. **Anti-windup**: Integrator frozen on saturated axes (via `setSaturationStatus`) and when `landed = true`
+8. **Integrator Clamping**: $|I| \leq \text{integrator\_limit}$
+9. **Yaw LPF**: First-order alpha filter on yaw torque (default cutoff 2 Hz)
 
 ## Default Parameters
 
 Based on PX4 v1.16.0 defaults:
+
+### Attitude Controller
 
 | Parameter | Default | Unit | Description |
 |-----------|---------|------|-------------|
@@ -271,6 +310,27 @@ Based on PX4 v1.16.0 defaults:
 | MC_ROLLRATE_MAX | 220 | °/s | Max roll rate (3.84 rad/s) |
 | MC_PITCHRATE_MAX | 220 | °/s | Max pitch rate (3.84 rad/s) |
 | MC_YAWRATE_MAX | 200 | °/s | Max yaw rate (3.49 rad/s) |
+
+### Rate Controller
+
+| Parameter | Default | Unit | Description |
+|-----------|---------|------|-------------|
+| MC_ROLLRATE_P | 0.15 | - | Roll rate P gain |
+| MC_ROLLRATE_I | 0.2 | - | Roll rate I gain |
+| MC_ROLLRATE_D | 0.003 | - | Roll rate D gain |
+| MC_ROLLRATE_K | 1.0 | - | Roll rate K multiplier |
+| MC_PITCHRATE_P | 0.15 | - | Pitch rate P gain |
+| MC_PITCHRATE_I | 0.2 | - | Pitch rate I gain |
+| MC_PITCHRATE_D | 0.003 | - | Pitch rate D gain |
+| MC_PITCHRATE_K | 1.0 | - | Pitch rate K multiplier |
+| MC_YAWRATE_P | 0.2 | - | Yaw rate P gain |
+| MC_YAWRATE_I | 0.1 | - | Yaw rate I gain |
+| MC_YAWRATE_D | 0.0 | - | Yaw rate D gain |
+| MC_YAWRATE_K | 1.0 | - | Yaw rate K multiplier |
+| MC_RR_INT_LIM | 0.3 | - | Roll rate integrator limit |
+| MC_PR_INT_LIM | 0.3 | - | Pitch rate integrator limit |
+| MC_YR_INT_LIM | 0.3 | - | Yaw rate integrator limit |
+| MC_YAW_LPF | 2.0 | Hz | Yaw torque LPF cutoff frequency |
 
 ## License
 
@@ -284,7 +344,10 @@ BSD 3-Clause (same as PX4)
 
 ## Notes
 
-- This extraction is for **autonomous mode only** - no manual control, VTOL, or EKF reset handling
+- This extraction is for **autonomous mode only** — no manual control, VTOL, or EKF reset handling
 - The matrix library is included but users can replace it with Eigen3 if preferred
-- Controller is stateless (no integral terms at this level)
-- Next step: Extract rate controller and control allocator for complete control chain
+- Attitude controller is stateless (proportional only); rate controller is stateful (integrators + yaw LPF)
+- The rate controller's `setSaturationStatus()` method is the hook for Phase 3 control allocation anti-windup
+- ✅ Phase 1 complete: Attitude control extracted and validated
+- ✅ Phase 2 complete: Rate control extracted, K-scaling + yaw LPF applied, anti-windup tested
+- Next step: **Phase 3 — Extract control allocator** (effectiveness matrix, desaturation, motor mixing)
