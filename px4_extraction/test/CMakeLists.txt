@@ -83,6 +83,24 @@ if(NOT GTest_FOUND)
             gtest_main
             pthread
     )
+
+    add_executable(l3_replay_gtest
+        L3_ReplayTest.cpp
+    )
+    target_include_directories(l3_replay_gtest PRIVATE /usr/include)
+    target_compile_definitions(l3_replay_gtest PRIVATE
+        L3_TRACE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/l3_trace.csv"
+    )
+    target_link_libraries(l3_replay_gtest
+        PRIVATE
+            attitude_control
+            rate_control
+            control_allocator
+            actuator_output
+            gtest
+            gtest_main
+            pthread
+    )
 else()
     add_executable(attitude_control_gtest
         AttitudeControlTest.cpp
@@ -134,6 +152,22 @@ else()
         L2_EquivalenceTest.cpp
     )
     target_link_libraries(l2_equivalence_gtest
+        PRIVATE
+            attitude_control
+            rate_control
+            control_allocator
+            actuator_output
+            GTest::GTest
+            GTest::Main
+    )
+
+    add_executable(l3_replay_gtest
+        L3_ReplayTest.cpp
+    )
+    target_compile_definitions(l3_replay_gtest PRIVATE
+        L3_TRACE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/data/l3_trace.csv"
+    )
+    target_link_libraries(l3_replay_gtest
         PRIVATE
             attitude_control
             rate_control
